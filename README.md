@@ -7,7 +7,7 @@ starts and ends.
 
 ## Install (unpacked, for personal use)
 
-1. Unzip this folder somewhere permanent (don't delete it after — Chrome
+1. Unzip this folder somewhere permanent (don't delete it after- Chrome
    loads the extension live from these files).
 2. Go to `chrome://extensions`.
 3. Turn on **Developer mode** (top right toggle).
@@ -47,7 +47,7 @@ With the player focused (not typing in a text box):
 The loop mechanism is a `requestAnimationFrame` loop watching the video
 element's `currentTime`; when it naturally crosses your end point during
 forward playback, it fades out, jumps `currentTime` back to your start
-point, and fades back in. No video is downloaded, re-encoded, or modified —
+point, and fades back in. No video is downloaded, re-encoded, or modified-
 this only controls playback position and opacity of the video already
 loaded in the page.
 
