@@ -52,14 +52,14 @@ this only controls playback position and opacity of the video already
 loaded in the page.
 
 If you manually scrub past the end point on purpose (skipping ahead), it
-won't fight you — the loop only triggers on natural forward playback
+won't fight you- the loop only triggers on natural forward playback
 crossing the boundary, not on a manual seek.
 
 The parts most likely to break on a future YouTube redesign: the button and
 the two handles both depend on YouTube's internal CSS class names
 (`.ytp-right-controls`, `.ytp-progress-bar-container`), which aren't a
 published API. If that happens, the button/handles may stop appearing even
-though the underlying loop logic in `content.js` is untouched — it's a
+though the underlying loop logic in `content.js` is untouched- it's a
 matter of updating those two selectors to whatever YouTube renamed them to.
 
 ## Permissions
