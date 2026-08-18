@@ -5,6 +5,13 @@ tab. A small button sits in YouTube's own player controls; click it to arm
 a loop, then drag two points directly on the seek bar to mark where it
 starts and ends.
 
+## Download
+
+**[Download the latest release](../../releases/latest)**
+
+Download the `.zip` file from the **Assets** section of the latest release
+and follow the installation instructions below.
+
 ## Install (unpacked, for personal use)
 
 1. Unzip this folder somewhere permanent (don't delete it after- Chrome
@@ -18,19 +25,19 @@ starts and ends.
 
 ## Using it
 
-- **Click the loop icon.** Two small blue dots appear directly on the seek
+* **Click the loop icon.** Two small blue dots appear directly on the seek
   bar, spanning a default 5-second window around your current playback
   position, with a translucent blue strip connecting them. The button
   itself lights up blue- looping is live from this point.
-- **Drag either dot** to redefine where the loop starts and ends. You can do
+* **Drag either dot** to redefine where the loop starts and ends. You can do
   this while the video keeps playing; the loop updates as you drag.
-- **Click the loop icon again** to turn it off. The dots disappear and
+* **Click the loop icon again** to turn it off. The dots disappear and
   playback continues normally past where the loop end used to be.
-- The jump itself fades the video out and back in over about a tenth of a
+* The jump itself fades the video out and back in over about a tenth of a
   second rather than cutting instantly, to soften the jump-cut. The audio
   still cuts cleanly at that instant- crossfading the actual audio stream
   isn't something available to a content script.
-- Your marked segment is remembered per-video (via `chrome.storage.local`),
+* Your marked segment is remembered per-video (via `chrome.storage.local`),
   so reopening the same video later restores where you left the dots, and
   whether the loop was on.
 
@@ -38,9 +45,9 @@ starts and ends.
 
 With the player focused (not typing in a text box):
 
-- `[` — set the loop's start point to the current playback position
-- `]` — set the loop's end point to the current playback position
-- `\` — arm/disarm the loop (same as clicking the button)
+* `[` — set the loop's start point to the current playback position
+* `]` — set the loop's end point to the current playback position
+* `\` — arm/disarm the loop (same as clicking the button)
 
 ## How it works, briefly
 
