@@ -24,7 +24,21 @@
   const SEEK_TOLERANCE = 1.5; // seconds; distinguishes natural playback from a manual seek
   const DEFAULT_SEGMENT_LEN = 5; // seconds, initial window when first armed
   const MIN_GAP = 0.25; // seconds; smallest allowed start/end separation
-  const FADE_MS = 130; // loop-jump fade duration
+  const REFINE_FADE_MS = 150; // fixed fade for refine's scan blackout - one-shot, not repeating, so not exposed as a setting
+
+  const SETTINGS_KEY = 'ytsl_settings';
+  const DEFAULT_SETTINGS = {
+    fadeMs: 130,
+    keys: { setStart: '[', setEnd: ']', toggleLoop: '\\', refine: 'Enter' },
+  };
+  let fadeMs = DEFAULT_SETTINGS.fadeMs;
+  let keyBinds = { ...DEFAULT_SETTINGS.keys };
+
+  const REFINE_RADIUS = 0.6; // seconds either side of a point to search for a better match
+  const REFINE_WINDOW = REFINE_RADIUS * 2 + 0.15; // capture length per point
+  const TEMPLATE_LEN = 0.28; // seconds, the snippet used as the fingerprint - motif-sized, not just a transient
+  const DECIMATE = 8; // crude downsample factor to keep the correlation fast
+  const MIN_ENERGY_RATIO = 0.35; // candidate windows quieter than this fraction of the anchor get skipped, so it can't hide in a gap
 
   let video = null;
   let currentVideoId = null;
@@ -40,6 +54,15 @@
   let startHandle = null;
   let endHandle = null;
   let draggingHandle = null; // 'start' | 'end' | null
+
+  // audio routing, wired up lazily the first time a loop is armed
+  let audioCtx = null;
+  let mediaSource = null;
+  let gainNode = null;
+  let scriptNode = null;
+  let audioGraphReady = false;
+  let audioGraphVideoEl = null;
+  let refining = false;
 
   // Helpers
 
@@ -74,6 +97,25 @@
       });
     });
   }
+
+  function applySettings(s) {
+    if (!s) s = {};
+    fadeMs = Math.max(0, Math.min(500, typeof s.fadeMs === 'number' ? s.fadeMs : DEFAULT_SETTINGS.fadeMs));
+    keyBinds = { ...DEFAULT_SETTINGS.keys, ...(s.keys || {}) };
+  }
+
+  function loadSettings() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([SETTINGS_KEY], (result) => {
+        applySettings(result[SETTINGS_KEY]);
+        resolve();
+      });
+    });
+  }
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[SETTINGS_KEY]) applySettings(changes[SETTINGS_KEY].newValue);
+  });
 
 
   function waitForVideo() {
@@ -224,6 +266,171 @@
     saveState();
   }
 
+  function ensureAudioGraph() {
+    if (!video) return false;
+    if (audioGraphReady && audioGraphVideoEl === video) return true;
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      mediaSource = audioCtx.createMediaElementSource(video);
+      gainNode = audioCtx.createGain();
+      mediaSource.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      // separate silent tap so we can grab raw samples for refine without
+      // touching what actually reaches the speakers
+      scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+      const silentSink = audioCtx.createGain();
+      silentSink.gain.value = 0;
+      mediaSource.connect(scriptNode);
+      scriptNode.connect(silentSink);
+      silentSink.connect(audioCtx.destination);
+
+      audioGraphReady = true;
+      audioGraphVideoEl = video;
+    } catch (err) {
+      // probably some other extension already claimed this video's audio graph
+      console.warn('[Splice Looper] no audio routing, falling back to visual-only fade', err);
+      audioGraphReady = false;
+    }
+    return audioGraphReady;
+  }
+
+  // refine - snap loopEnd to the best-matching spot near where it already is
+
+  function seekAndWait(time) {
+    return new Promise((resolve) => {
+      const onSeeked = () => {
+        video.removeEventListener('seeked', onSeeked);
+        resolve();
+      };
+      video.addEventListener('seeked', onSeeked);
+      video.currentTime = time;
+    });
+  }
+
+  function captureSamples(durationSec) {
+    return new Promise((resolve) => {
+      const needed = Math.ceil(durationSec * audioCtx.sampleRate);
+      const chunks = [];
+      let collected = 0;
+      scriptNode.onaudioprocess = (e) => {
+        const data = e.inputBuffer.getChannelData(0);
+        chunks.push(new Float32Array(data));
+        collected += data.length;
+        if (collected >= needed) {
+          scriptNode.onaudioprocess = null;
+          const out = new Float32Array(collected);
+          let offset = 0;
+          for (const c of chunks) {
+            out.set(c, offset);
+            offset += c.length;
+          }
+          resolve(out.subarray(0, needed));
+        }
+      };
+    });
+  }
+
+  function withTimeout(promise, ms) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('capture timeout')), ms)),
+    ]);
+  }
+
+  async function captureAround(centerTime) {
+    await seekAndWait(Math.max(0, centerTime - REFINE_RADIUS));
+    await video.play();
+    return captureSamples(REFINE_WINDOW);
+  }
+
+  function decimate(arr, factor) {
+    const out = new Float32Array(Math.floor(arr.length / factor));
+    for (let i = 0; i < out.length; i++) out[i] = arr[i * factor];
+    return out;
+  }
+
+  function rms(arr) {
+    let sum = 0;
+    for (let i = 0; i < arr.length; i++) sum += arr[i] * arr[i];
+    return Math.sqrt(sum / arr.length);
+  }
+
+  function normalizedCorrelation(a, b, energyA, energyB) {
+    let dot = 0;
+    for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+    const denom = energyA * energyB * a.length;
+    return denom > 0 ? dot / denom : -Infinity;
+  }
+
+  function findBestOffset(startBuf, endBuf, sampleRate) {
+    const templateHalf = Math.round((TEMPLATE_LEN / 2) * sampleRate);
+    const centerIdx = Math.round(REFINE_RADIUS * sampleRate);
+    const template = decimate(
+      startBuf.subarray(Math.max(0, centerIdx - templateHalf), centerIdx + templateHalf),
+      DECIMATE
+    );
+    const search = decimate(endBuf, DECIMATE);
+    const decRate = sampleRate / DECIMATE;
+
+    const templateEnergy = rms(template);
+    const minEnergy = templateEnergy * MIN_ENERGY_RATIO;
+
+    let bestScore = -Infinity;
+    let bestIdx = Math.round(search.length / 2);
+    for (let i = 0; i <= search.length - template.length; i++) {
+      const window = search.subarray(i, i + template.length);
+      const windowEnergy = rms(window);
+      if (windowEnergy < minEnergy) continue; // too quiet to be the real motif, skip it
+
+      const score = normalizedCorrelation(template, window, templateEnergy, windowEnergy);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    const matchCenter = bestIdx + Math.floor(template.length / 2);
+    return matchCenter / decRate;
+  }
+
+  async function refineLoop() {
+    if (refining || !video || !loopEnabled) return;
+    if (loopStart == null || loopEnd == null) return;
+    if (loopEnd - loopStart < REFINE_RADIUS * 2 + TEMPLATE_LEN) return;
+    if (!ensureAudioGraph()) return;
+
+    refining = true;
+    const wasPaused = video.paused;
+    const returnTime = video.currentTime;
+    const priorGain = gainNode.gain.value;
+
+    gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+    video.style.transitionDuration = REFINE_FADE_MS + 'ms';
+    video.style.opacity = '0';
+
+    try {
+      const startBuf = await withTimeout(captureAround(loopStart), 3000);
+      const endBuf = await withTimeout(captureAround(loopEnd), 3000);
+      const offsetSec = findBestOffset(startBuf, endBuf, audioCtx.sampleRate);
+      const refinedEnd = loopEnd - REFINE_RADIUS + offsetSec;
+      loopEnd = Math.min(video.duration || refinedEnd, Math.max(loopStart + MIN_GAP, refinedEnd));
+      renderLoopMarkers();
+      saveState();
+    } catch (err) {
+      console.warn('[Splice Looper] refine failed, leaving loop points as-is', err);
+    }
+
+    scriptNode.onaudioprocess = null;
+    video.currentTime = returnTime;
+    video.style.opacity = '1';
+    gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(priorGain, audioCtx.currentTime);
+    if (wasPaused) video.pause();
+    refining = false;
+  }
+
   // arming and disarming hehe
 
   function ensureDefaultPoints() {
@@ -239,6 +446,7 @@
     if (!video) return;
     if (!loopEnabled) {
       ensureDefaultPoints();
+      ensureAudioGraph();
       loopEnabled = true;
     } else {
       loopEnabled = false;
@@ -252,17 +460,40 @@
 
   function performLoopJump() {
     if (jumping || !video) return;
+
+    if (fadeMs <= 0) {
+      video.currentTime = loopStart;
+      return;
+    }
+
     jumping = true;
+
+    const audioReady = audioGraphReady && audioGraphVideoEl === video;
+    if (audioReady && audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioReady) {
+      const t0 = audioCtx.currentTime;
+      gainNode.gain.cancelScheduledValues(t0);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, t0);
+      gainNode.gain.linearRampToValueAtTime(0, t0 + fadeMs / 1000);
+    }
+
+    video.style.transitionDuration = fadeMs + 'ms';
     video.style.opacity = '0';
     setTimeout(() => {
       video.currentTime = loopStart;
       requestAnimationFrame(() => {
         video.style.opacity = '1';
+        if (audioReady) {
+          const t1 = audioCtx.currentTime;
+          gainNode.gain.cancelScheduledValues(t1);
+          gainNode.gain.setValueAtTime(0, t1);
+          gainNode.gain.linearRampToValueAtTime(1, t1 + fadeMs / 1000);
+        }
         setTimeout(() => {
           jumping = false;
-        }, FADE_MS);
+        }, fadeMs);
       });
-    }, FADE_MS);
+    }, fadeMs);
   }
 
   function loopTick() {
@@ -270,6 +501,7 @@
       video &&
       loopEnabled &&
       !jumping &&
+      !refining &&
       loopStart != null &&
       loopEnd != null &&
       loopEnd > loopStart
@@ -294,17 +526,21 @@
       (document.activeElement && document.activeElement.isContentEditable);
     if (editable || !video) return;
 
-    if (e.key === '[') {
+    if (e.key === keyBinds.setStart) {
       loopStart = video.currentTime;
       if (loopEnd != null && loopEnd <= loopStart) loopEnd = null;
       renderLoopMarkers();
       saveState();
-    } else if (e.key === ']') {
+    } else if (e.key === keyBinds.setEnd) {
       loopEnd = video.duration ? Math.min(video.currentTime, video.duration) : video.currentTime;
       renderLoopMarkers();
       saveState();
-    } else if (e.key === '\\') {
+    } else if (e.key === keyBinds.toggleLoop) {
       toggleLoopActive();
+    } else if (e.key === keyBinds.refine) {
+      e.preventDefault();
+      e.stopPropagation();
+      refineLoop();
     }
   }
 
@@ -354,7 +590,8 @@
     setupForVideo(id);
   }
 
-  function init() {
+  async function init() {
+    await loadSettings();
     document.addEventListener('keydown', onKeydown, true);
     document.addEventListener('yt-navigate-finish', handlePossibleNavigation);
     // Fallback in case yt-navigate-finish isn't fired in some YouTube build.
