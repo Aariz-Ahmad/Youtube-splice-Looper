@@ -89,9 +89,6 @@ an instant cut. No video is downloaded, re-encoded, or modified - this only
 controls playback position and, when fading, opacity of the video already
 loaded in the page.
 
-If you manually scrub past the end point on purpose (skipping ahead), it
-won't fight you - the loop only triggers on natural forward playback
-crossing the boundary, not on a manual seek.
 
 The parts most likely to break on a future YouTube redesign: the button and
 the two handles both depend on YouTube's internal CSS class names
