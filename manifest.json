@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Splice Looper for YouTube",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Mark a start and end point on any YouTube video and loop just that segment, seamlessly, from a control built into the player itself.",
   "permissions": ["storage"],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
   "content_scripts": [
     {
       "matches": ["*://www.youtube.com/*", "*://m.youtube.com/*"],
