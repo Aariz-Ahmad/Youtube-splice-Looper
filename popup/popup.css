@@ -1,0 +1,111 @@
+body {
+  width: 260px;
+  margin: 0;
+  padding: 14px;
+  background: #0f0f0f;
+  color: #fff;
+  font-family: 'Roboto', 'Arial', sans-serif;
+  font-size: 13px;
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+
+h2 {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.6;
+  margin: 0 0 8px;
+}
+
+section {
+  margin-bottom: 16px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.row label {
+  opacity: 0.85;
+}
+
+.fade-input {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fade-input input[type='number'] {
+  width: 56px;
+  background: #000;
+  border: 1px solid #444;
+  color: #fff;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.fade-input input[type='number']:focus {
+  outline: 2px solid #3ea6ff;
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.fade-input span {
+  opacity: 0.6;
+  font-size: 11px;
+}
+
+.keybind-btn {
+  min-width: 64px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.keybind-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.keybind-btn.recording {
+  background: rgba(62, 166, 255, 0.2);
+  border-color: #3ea6ff;
+  color: #3ea6ff;
+}
+
+.hint {
+  opacity: 0.5;
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 6px 0 0;
+}
+
+.reset-btn {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.reset-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}

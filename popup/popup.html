@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <h1>Splice Looper</h1>
+
+  <section>
+    <h2>Loop jump</h2>
+    <div class="row">
+      <label for="fadeMs">Fade duration</label>
+      <div class="fade-input">
+        <input type="number" id="fadeMs" min="0" max="500" step="10" />
+        <span>ms</span>
+      </div>
+    </div>
+    <p class="hint">0 = instant cut, no fade at all. Higher values smooth the seam but add a pause every loop cycle.</p>
+  </section>
+
+  <section>
+    <h2>Keybinds</h2>
+    <div class="row">
+      <label>Set start</label>
+      <button class="keybind-btn" data-action="setStart"></button>
+    </div>
+    <div class="row">
+      <label>Set end</label>
+      <button class="keybind-btn" data-action="setEnd"></button>
+    </div>
+    <div class="row">
+      <label>Arm / disarm loop</label>
+      <button class="keybind-btn" data-action="toggleLoop"></button>
+    </div>
+    <div class="row">
+      <label>Refine (motif snap)</label>
+      <button class="keybind-btn" data-action="refine"></button>
+    </div>
+    <p class="hint" id="keybindHint">Click a keybind, then press any key.</p>
+  </section>
+
+  <button id="resetBtn" class="reset-btn">Reset to defaults</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>
