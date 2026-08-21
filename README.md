@@ -7,7 +7,7 @@ starts and ends.
 
 ## [Install (unpacked, for personal use)](../../releases/latest)
 
-1. Unzip this folder somewhere permanent (don't delete it after — Chrome
+1. Unzip this folder somewhere permanent (don't delete it after - Chrome
    loads the extension live from these files).
 2. Go to `chrome://extensions`.
 3. Turn on **Developer mode** (top right toggle).
@@ -42,14 +42,14 @@ starts and ends.
 Click the extension's icon in Chrome's toolbar to open a small settings
 panel:
 
-- **Fade duration** — how long the loop-jump fade takes, in ms. Defaults to
+- **Fade duration** - how long the loop-jump fade takes, in ms. Defaults to
   130. Set it to 0 for an instant cut with no pause at all- worth trying
   once you've refined a loop point, since a well-matched seam often doesn't
   need the fade to sound clean, and the fade itself becomes a repeating
   interruption on short loops. Refine's own scan blackout is fixed at 150ms
   regardless of this setting, since that's a one-shot action, not something
   that repeats every loop cycle.
-- **Keybinds** — click any keybind button, then press the key you want.
+- **Keybinds** - click any keybind button, then press the key you want.
   Esc cancels. Picking a key already in use by another action here is
   blocked with an inline note rather than silently overwriting it.
 - Changes apply immediately to any open YouTube tab, no reload needed.
@@ -57,13 +57,13 @@ panel:
 
 ### Keyboard shortcuts
 
-With the player focused (not typing in a text box). Defaults shown below —
+With the player focused (not typing in a text box). Defaults shown below -
 all four are rebindable from the popup.
 
-- `[` — set the loop's start point to the current playback position
-- `]` — set the loop's end point to the current playback position
-- `\` — arm/disarm the loop (same as clicking the button)
-- `Enter` — refine: nudges your end point to the nearest spot (within
+- `[` - set the loop's start point to the current playback position
+- `]` - set the loop's end point to the current playback position
+- `\` - arm/disarm the loop (same as clicking the button)
+- `Enter` - refine: nudges your end point to the nearest spot (within
   about six tenths of a second either way) where the audio actually matches the
   motif at your start point, so the seam sounds closer to "that's just how
   the song goes" instead of an audible splice. It compares waveform shape,
@@ -71,7 +71,7 @@ all four are rebindable from the popup.
   the seam in silence instead of a real repeat. It works by briefly muting
   and fading to black, silently scrubbing to each point, comparing a short
   captured audio snippet from each, then fading back in where you left off
-  — about three seconds total. This is a coarse match, not sample-perfect
+  - about three seconds total. This is a coarse match, not sample-perfect
   phase alignment, so treat it as a nudge in the right direction rather
   than a guarantee - real repeated sections in a song (a second chorus, a
   repeated riff) are often not bit-identical, so it won't always find a
@@ -83,9 +83,9 @@ all four are rebindable from the popup.
 
 The loop mechanism is a `requestAnimationFrame` loop watching the video
 element's `currentTime`; when it naturally crosses your end point during
-forward playback, it jumps `currentTime` back to your start point — fading
+forward playback, it jumps `currentTime` back to your start point - fading
 out and back in first if the fade duration isn't set to 0, otherwise it's
-an instant cut. No video is downloaded, re-encoded, or modified — this only
+an instant cut. No video is downloaded, re-encoded, or modified - this only
 controls playback position and, when fading, opacity of the video already
 loaded in the page.
 
@@ -94,7 +94,7 @@ The parts most likely to break on a future YouTube redesign: the button and
 the two handles both depend on YouTube's internal CSS class names
 (`.ytp-right-controls`, `.ytp-progress-bar-container`), which aren't a
 published API. If that happens, the button/handles may stop appearing even
-though the underlying loop logic in `content.js` is untouched — it's a
+though the underlying loop logic in `content.js` is untouched - it's a
 matter of updating those two selectors to whatever YouTube renamed them to.
 
 ## Permissions
