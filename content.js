@@ -42,6 +42,7 @@
 
   let video = null;
   let currentVideoId = null;
+  let setupGen = 0; // bumped on every navigation so overlapping async setups can detect they've been superseded
   let loopStart = null;
   let loopEnd = null;
   let loopEnabled = false;
@@ -86,14 +87,20 @@
     });
   }
 
+  // Returns the saved state rather than assigning straight to the globals -
+  // callers decide whether to apply it. Necessary because this is async, and
+  // if the user has already flipped to another video by the time it
+  // resolves, blindly assigning here would stomp the newer video's state
+  // with this stale one.
   function loadState(id) {
     return new Promise((resolve) => {
       chrome.storage.local.get([storageKey(id)], (result) => {
         const state = result[storageKey(id)];
-        loopStart = state?.start ?? null;
-        loopEnd = state?.end ?? null;
-        loopEnabled = state?.enabled ?? false;
-        resolve();
+        resolve({
+          start: state?.start ?? null,
+          end: state?.end ?? null,
+          enabled: state?.enabled ?? false,
+        });
       });
     });
   }
@@ -152,6 +159,18 @@
     return document.querySelector('.ytp-progress-bar-container');
   }
 
+  // formats seconds as YouTube does: M:SS, or H:MM:SS past the hour mark
+  function formatTime(seconds) {
+    if (!isFinite(seconds) || seconds < 0) seconds = 0;
+    const totalSec = Math.floor(seconds);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const ss = String(s).padStart(2, '0');
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${ss}`;
+    return `${m}:${ss}`;
+  }
+
   //ui player button
 
   function injectButton(controls) {
@@ -180,6 +199,9 @@
 
   // ui for the draggable handles and overlay
 
+  let startTimeLabel = null;
+  let endTimeLabel = null;
+
   function ensureMarkerEls(container) {
     if (!overlayEl || !container.contains(overlayEl)) {
       overlayEl = document.createElement('div');
@@ -189,12 +211,18 @@
     if (!startHandle || !container.contains(startHandle)) {
       startHandle = document.createElement('div');
       startHandle.className = 'ytsl-handle ytsl-handle-start';
+      startTimeLabel = document.createElement('div');
+      startTimeLabel.className = 'ytsl-handle-time';
+      startHandle.appendChild(startTimeLabel);
       container.appendChild(startHandle);
       attachHandleDrag(startHandle, 'start');
     }
     if (!endHandle || !container.contains(endHandle)) {
       endHandle = document.createElement('div');
       endHandle.className = 'ytsl-handle ytsl-handle-end';
+      endTimeLabel = document.createElement('div');
+      endTimeLabel.className = 'ytsl-handle-time';
+      endHandle.appendChild(endTimeLabel);
       container.appendChild(endHandle);
       attachHandleDrag(endHandle, 'end');
     }
@@ -202,10 +230,13 @@
 
   function renderLoopMarkers() {
     const container = getProgressBarContainer();
-    if (!container || !video) return;
+    // container gone = player's not on screen, nothing to draw. video==null
+    // still has to make it down to the hide branch below though, not bail
+    // out here - otherwise stale dots from the last video just sit there.
+    if (!container) return;
     ensureMarkerEls(container);
 
-    if (!loopEnabled || loopStart == null || loopEnd == null || !video.duration) {
+    if (!loopEnabled || loopStart == null || loopEnd == null || !video || !video.duration) {
       overlayEl.style.display = 'none';
       startHandle.style.display = 'none';
       endHandle.style.display = 'none';
@@ -222,8 +253,11 @@
 
     startHandle.style.display = 'block';
     startHandle.style.left = leftPct + '%';
+    startTimeLabel.textContent = formatTime(loopStart);
+
     endHandle.style.display = 'block';
     endHandle.style.left = rightPct + '%';
+    endTimeLabel.textContent = formatTime(loopEnd);
   }
 
   // drag logic
@@ -233,6 +267,8 @@
       e.preventDefault();
       e.stopPropagation();
       draggingHandle = which;
+      // :active drops out mid-drag once the pointer outruns the handle, so track it ourselves for the tooltip
+      el.classList.add('ytsl-dragging');
       document.addEventListener('pointermove', onHandleDrag);
       document.addEventListener('pointerup', onHandleDragEnd);
       document.addEventListener('pointercancel', onHandleDragEnd);
@@ -259,6 +295,8 @@
   }
 
   function onHandleDragEnd() {
+    if (startHandle) startHandle.classList.remove('ytsl-dragging');
+    if (endHandle) endHandle.classList.remove('ytsl-dragging');
     draggingHandle = null;
     document.removeEventListener('pointermove', onHandleDrag);
     document.removeEventListener('pointerup', onHandleDragEnd);
@@ -271,6 +309,16 @@
     if (audioGraphReady && audioGraphVideoEl === video) return true;
     try {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // wipe any graph left wired to a stale video element first -
+      // createMediaElementSource only works once per element, ever
+      if (mediaSource) { try { mediaSource.disconnect(); } catch (_) {} }
+      if (gainNode) { try { gainNode.disconnect(); } catch (_) {} }
+      if (scriptNode) {
+        try { scriptNode.disconnect(); } catch (_) {}
+        scriptNode.onaudioprocess = null;
+      }
+
       mediaSource = audioCtx.createMediaElementSource(video);
       gainNode = audioCtx.createGain();
       mediaSource.connect(gainNode);
@@ -461,42 +509,49 @@
   function performLoopJump() {
     if (jumping || !video) return;
 
-    if (fadeMs <= 0) {
+    // rAF throttles to ~nothing in hidden/minimized tabs, which used to strand
+    // the gain-restore + jumping flag in a nested rAF that just never ran again.
+    // setTimeout still fires backgrounded, so everything below rides on that
+    // instead, and the cosmetic fade gets skipped while hidden - nothing to paint anyway.
+    const effectiveFade = document.hidden ? 0 : fadeMs;
+    const audioReady = audioGraphReady && audioGraphVideoEl === video;
+
+    if (effectiveFade <= 0) {
+      if (audioReady && audioCtx.state === 'suspended') audioCtx.resume();
       video.currentTime = loopStart;
       return;
     }
 
     jumping = true;
 
-    const audioReady = audioGraphReady && audioGraphVideoEl === video;
     if (audioReady && audioCtx.state === 'suspended') audioCtx.resume();
     if (audioReady) {
       const t0 = audioCtx.currentTime;
       gainNode.gain.cancelScheduledValues(t0);
       gainNode.gain.setValueAtTime(gainNode.gain.value, t0);
-      gainNode.gain.linearRampToValueAtTime(0, t0 + fadeMs / 1000);
+      gainNode.gain.linearRampToValueAtTime(0, t0 + effectiveFade / 1000);
     }
 
-    video.style.transitionDuration = fadeMs + 'ms';
+    video.style.transitionDuration = effectiveFade + 'ms';
     video.style.opacity = '0';
     setTimeout(() => {
       video.currentTime = loopStart;
-      requestAnimationFrame(() => {
-        video.style.opacity = '1';
-        if (audioReady) {
-          const t1 = audioCtx.currentTime;
-          gainNode.gain.cancelScheduledValues(t1);
-          gainNode.gain.setValueAtTime(0, t1);
-          gainNode.gain.linearRampToValueAtTime(1, t1 + fadeMs / 1000);
-        }
-        setTimeout(() => {
-          jumping = false;
-        }, fadeMs);
-      });
-    }, fadeMs);
+      video.style.opacity = '1';
+      if (audioReady) {
+        const t1 = audioCtx.currentTime;
+        gainNode.gain.cancelScheduledValues(t1);
+        gainNode.gain.setValueAtTime(0, t1);
+        gainNode.gain.linearRampToValueAtTime(1, t1 + effectiveFade / 1000);
+      }
+      setTimeout(() => {
+        jumping = false;
+      }, effectiveFade);
+    }, effectiveFade);
   }
 
-  function loopTick() {
+  // shared by rAF and timeupdate below - rAF alone dies in the background,
+  // right when this thing's most likely to be running as music
+  function evaluateLoop() {
     if (
       video &&
       loopEnabled &&
@@ -513,7 +568,24 @@
       }
     }
     lastTime = video ? video.currentTime : 0;
+  }
+
+  function loopTick() {
+    evaluateLoop();
     rafId = requestAnimationFrame(loopTick);
+  }
+
+  function onVideoTimeUpdate() {
+    evaluateLoop();
+  }
+
+  // keeps timeupdate pointed at whatever <video> is current, no dupes when YouTube reuses the element across navigations
+  let timeUpdateVideoEl = null;
+  function bindTimeUpdate(v) {
+    if (timeUpdateVideoEl === v) return;
+    if (timeUpdateVideoEl) timeUpdateVideoEl.removeEventListener('timeupdate', onVideoTimeUpdate);
+    if (v) v.addEventListener('timeupdate', onVideoTimeUpdate);
+    timeUpdateVideoEl = v;
   }
 
   // shortcuts
@@ -547,18 +619,52 @@
 
 
   async function setupForVideo(id) {
+    // own generation number - every await below rechecks it, so a slow call
+    // that got superseded by a newer video can't land its stale data on top
+    const gen = ++setupGen;
     currentVideoId = id;
-    await loadState(id);
+
+    // reset before awaiting anything - otherwise a loop armed on the old
+    // video stays live, old timestamps and all, until loadState/waitForVideo
+    // get around to resolving, and it'll happily jump on a video you never touched
+    loopStart = null;
+    loopEnd = null;
+    loopEnabled = false;
+    lastTime = 0;
+    updateButtonState();
+    renderLoopMarkers();
+
+    const state = await loadState(id);
+    if (gen !== setupGen) return; // superseded by a newer navigation
+
+    loopStart = state.start;
+    loopEnd = state.end;
+    loopEnabled = state.enabled;
 
     video = await waitForVideo();
+    if (gen !== setupGen) return;
+
     video.style.opacity = '';
     video.classList.add('ytsl-loop-fade');
+    lastTime = video.currentTime || 0;
+    bindTimeUpdate(video);
 
     const controls = await waitForControls();
+    if (gen !== setupGen) return;
     injectButton(controls);
 
-    if (video.readyState >= 1) clampToDuration();
-    else video.addEventListener('loadedmetadata', clampToDuration, { once: true });
+    if (video.readyState >= 1) {
+      clampToDuration();
+    } else {
+      video.addEventListener(
+        'loadedmetadata',
+        () => {
+          if (gen !== setupGen) return;
+          clampToDuration();
+        },
+        { once: true }
+      );
+    }
 
     updateButtonState();
     renderLoopMarkers();
@@ -573,17 +679,21 @@
   }
 
   function teardown() {
+    setupGen++; // cancels any setupForVideo() still mid-flight
     currentVideoId = null;
     video = null;
     loopStart = null;
     loopEnd = null;
     loopEnabled = false;
+    lastTime = 0;
+    updateButtonState();
+    renderLoopMarkers();
   }
 
   function handlePossibleNavigation() {
     const id = getVideoId();
     if (!id) {
-      teardown();
+      if (currentVideoId !== null) teardown();
       return;
     }
     if (id === currentVideoId) return;
@@ -594,6 +704,12 @@
     await loadSettings();
     document.addEventListener('keydown', onKeydown, true);
     document.addEventListener('yt-navigate-finish', handlePossibleNavigation);
+    // some browsers suspend the AudioContext after a while backgrounded - wake it on return so audio doesn't come back muted
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    });
     // Fallback in case yt-navigate-finish isn't fired in some YouTube build.
     let lastHref = location.href;
     setInterval(() => {
